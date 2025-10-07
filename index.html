@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Generador de Mapas</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <h1>Generador de Mapas</h1>
+        <p class="hint">Ingresa una dirección por línea. Podrás elegir el tipo de marcador por cada dirección.</p>
+        <textarea id="addressesInput" placeholder="Ejemplo:\nAv. Siempre Viva 742, Springfield\nCalle Falsa 123, Ciudad\n..." rows="6"></textarea>
+        <div class="controls">
+          <button id="geocodeBtn">Buscar y mostrar en el mapa</button>
+        </div>
+
+        <div class="controls" style="margin-top: 6px">
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)">
+            <input type="checkbox" id="restrictComuna9" checked />
+            Restringir resultados a Comuna 9 (CABA)
+          </label>
+        </div>
+
+        <div class="legend">
+          <span class="legend-item tipoA">A</span>
+          <span class="legend-item tipoB">B</span>
+          <span class="legend-item tipoC">C</span>
+          <span class="legend-item tipoD">D</span>
+          <span class="legend-label">Tipos de marcadores</span>
+        </div>
+
+        <h2>Direcciones</h2>
+        <div id="addressList" class="address-list"></div>
+
+        <div class="extras">
+          <button id="saveBtn" class="secondary">Guardar JSON</button>
+          <button id="loadBtn" class="secondary">Cargar guardado</button>
+          <button id="exportBtn" class="secondary">Exportar PNG</button>
+          <button id="exportPdfBtn" class="secondary">Exportar PDF</button>
+        </div>
+      </aside>
+      <main class="map-wrap">
+        <div id="map"></div>
+      </main>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+    <script src="script.js"></script>
+  </body>
+  </html>
