@@ -1,4 +1,4 @@
-// Estado de la aplicación
+﻿// Estado de la aplicaciÃ³n
 const state = {
   items: [], // { id, raw, type, status, lat, lon, displayName, marker }
   awaitingPickForId: null
@@ -13,7 +13,7 @@ function initMap() {
   map = L.map('map', {
     preferCanvas: true,
     zoomControl: true
-  }).setView([40.4168, -3.7038], 5); // España por defecto
+  }).setView([40.4168, -3.7038], 5); // EspaÃ±a por defecto
 
   // CartoDB Positron para estilo claro y etiquetas legibles
   L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
@@ -28,6 +28,11 @@ function initMap() {
     maxClusterRadius: 50
   });
   map.addLayer(cluster);
+
+  // Barra de escala para impresión
+  if (L.control && L.control.scale) {
+    L.control.scale({ position: 'bottomleft', metric: true, imperial: false }).addTo(map);
+  }
 
   // Pane para etiquetas por encima de los marcadores
   map.createPane('labelsPane');
@@ -122,7 +127,7 @@ function showManualControls(container, item) {
 
   const lat = document.createElement('input'); lat.placeholder = 'Latitud'; lat.type = 'number'; lat.step = 'any'; lat.className = 'coord';
   const lon = document.createElement('input'); lon.placeholder = 'Longitud'; lon.type = 'number'; lon.step = 'any'; lon.className = 'coord';
-  const setBtn = document.createElement('button'); setBtn.textContent = 'Añadir';
+  const setBtn = document.createElement('button'); setBtn.textContent = 'AÃ±adir';
   const pickBtn = document.createElement('button'); pickBtn.className = 'secondary'; pickBtn.textContent = 'Seleccionar en mapa';
 
   setBtn.addEventListener('click', () => {
@@ -130,13 +135,13 @@ function showManualControls(container, item) {
     if (Number.isFinite(la) && Number.isFinite(lo)) {
       setManual(item, la, lo);
     } else {
-      alert('Latitud/Longitud inválida');
+      alert('Latitud/Longitud invÃ¡lida');
     }
   });
   pickBtn.addEventListener('click', () => {
     state.awaitingPickForId = item.id;
     pickBtn.disabled = true;
-    pickBtn.textContent = 'Haga clic en el mapa…';
+    pickBtn.textContent = 'Haga clic en el mapaâ€¦';
   });
 
   panel.appendChild(lat); panel.appendChild(lon); panel.appendChild(setBtn); panel.appendChild(pickBtn);
@@ -187,10 +192,19 @@ function updateMarkerStyle(item) {
 }
 
 async function geocodeAll(items) {
-  // Process sequentially to be gentle on Nominatim
-  for (const it of items) {
-    await geocodeItem(it);
-  }
+  // Nominatim only: concurrencia moderada para acelerar
+  const concurrency = 3;
+  let idx = 0;
+  const worker = async () => {
+    while (idx < items.length) {
+      const i = idx++;
+      await geocodeItem(items[i]);
+      // pequeño respiro para evitar bloqueos
+      await new Promise(r => setTimeout(r, 120));
+    }
+  };
+  const workers = Array.from({ length: concurrency }, () => worker());
+  await Promise.all(workers);
   fitToMarkers();
   updateLabelsThrottled();
 }
@@ -218,7 +232,7 @@ async function geocodeItem(item) {
       }
       item.status = 'found';
       addOrUpdateMarker(item);
-      // Enriquecer con reverse (para mostrar info local más precisa)
+      // Enriquecer con reverse (para mostrar info local mÃ¡s precisa)
       try {
         const r = await fetch(`/api/reverse?lat=${item.lat}&lon=${item.lon}`);
         if (r.ok) {
@@ -234,7 +248,7 @@ async function geocodeItem(item) {
             const hn = a.house_number || a.housenumber || a["addr:housenumber"];
             const sl2 = ((road ? road : '') + (hn ? (' ' + hn) : '')).trim();
             if (sl2) item.street = sl2;
-            const nota = [calle && `${calle} ${altura}`.trim(), barrio, ciudad].filter(Boolean).join(' · ');
+            const nota = [calle && `${calle} ${altura}`.trim(), barrio, ciudad].filter(Boolean).join(' Â· ');
             item.displayName = nota || item.displayName;
             // derive street-only label
             {
@@ -302,7 +316,7 @@ function enrichManual(item) {
         const calle = a.road || '';
         const altura = a.house_number || '';
         const ciudad = a.city || a.town || 'CABA';
-        const nota = [calle && `${calle} ${altura}`.trim(), barrio, ciudad].filter(Boolean).join(' · ');
+        const nota = [calle && `${calle} ${altura}`.trim(), barrio, ciudad].filter(Boolean).join(' Â· ');
         item.displayName = nota || item.displayName;
         // derive street-only label
         {
@@ -342,7 +356,7 @@ async function onClickLoad() {
   const res = await fetch('/api/load');
   if (!res.ok) return alert('No se pudo cargar');
   const data = await res.json();
-  if (!data || !Array.isArray(data.items)) return alert('Formato inválido');
+  if (!data || !Array.isArray(data.items)) return alert('Formato invÃ¡lido');
   cluster.clearLayers();
   state.items = data.items.map(it => ({ ...it, marker: null }));
   renderList();
@@ -373,7 +387,7 @@ function exportPNGWithHtmlToImage() {
 function exportPDFWithHtmlToImage() {
   const node = document.getElementById('map');
   if (!window.htmlToImage || !window.jspdf) {
-    alert('Dependencias de exportación no disponibles');
+    alert('Dependencias de exportaciÃ³n no disponibles');
     return;
   }
   const { jsPDF } = window.jspdf;
@@ -408,6 +422,8 @@ function bindUI() {
   document.getElementById('loadBtn').addEventListener('click', onClickLoad);
   document.getElementById('exportBtn').addEventListener('click', exportPNGWithHtmlToImage);
   document.getElementById('exportPdfBtn').addEventListener('click', exportPDFWithHtmlToImage);
+  const printBtn = document.getElementById('printBtn');
+  if (printBtn) printBtn.addEventListener('click', () => window.print());
 }
 
 function popupHtml(item) {
@@ -424,6 +440,14 @@ function updateLabelsThrottled() {
 function shortLabel(it) {
   // Prefiere calle y altura; si no, usa texto ingresado
   return (it.street && it.street.trim()) || it.raw || '';
+}
+
+function labelWithCross(it) {
+  const base = shortLabel(it);
+  if (it.cross && Array.isArray(it.cross) && it.cross.length) {
+    return `${base} (Entre: ${it.cross.join(' y ')})`;
+  }
+  return base;
 }
 
 function updateLabels() {
@@ -461,9 +485,9 @@ function updateLabels() {
     avgPx.x /= group.length; avgPx.y /= group.length;
     const labelLL = map.containerPointToLatLng(avgPx);
 
-    // Texto: unir direcciones si hay más de una
-    const texts = group.map(g => shortLabel(g.it));
-    const text = texts.join(' - ');
+    // Texto: unir direcciones si hay mÃ¡s de una
+    const texts = group.map(g => escapeHtml(labelWithCross(g.it)));
+    const text = texts.join('<br/>');
 
     const tip = L.tooltip({
       permanent: true,
@@ -473,7 +497,7 @@ function updateLabels() {
       className: 'addr-label'
     })
     .setLatLng(labelLL)
-    .setContent(escapeHtml(text));
+    .setContent(text);
 
     labelsLayer.addLayer(tip);
   }
@@ -483,3 +507,6 @@ window.addEventListener('DOMContentLoaded', () => {
   initMap();
   bindUI();
 });
+
+
+

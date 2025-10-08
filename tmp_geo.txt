@@ -1,0 +1,71 @@
+    item.marker.setLatLng(latlng).setIcon(makeDivIcon(item.type));
+    item.marker.bindPopup(popupHtml(item));
+    updateLabelsThrottled();
+    return;
+  }
+  const m = L.marker(latlng, { icon: makeDivIcon(item.type), title: item.raw });
+  m.bindPopup(popupHtml(item));
+  cluster.addLayer(m);
+  item.marker = m;
+  updateLabelsThrottled();
+}
+
+function updateMarkerStyle(item) {
+  if (item.marker) {
+    item.marker.setIcon(makeDivIcon(item.type));
+  }
+}
+
+async function geocodeAll(items) {
+  const engine = (document.getElementById('geocoderEngine') && document.getElementById('geocoderEngine').value) || 'auto';
+  // Limit concurrency to 1 for Nominatim, higher for others
+  const concurrency = engine === 'nominatim' ? 1 : 5;
+  let idx = 0;
+  const worker = async () => {
+    while (idx < items.length) {
+      const i = idx++;
+      await geocodeItem(items[i]);
+    }
+  };
+  const workers = Array.from({ length: concurrency }, () => worker());
+  await Promise.all(workers);
+  fitToMarkers();
+  updateLabelsThrottled();
+}
+
+async function geocodeItem(item) {
+  item.status = 'pending';
+  renderList();
+  try {
+    const restrict = document.getElementById('restrictComuna9').checked ? 'comuna9' : '';
+    const engine = (document.getElementById('geocoderEngine') && document.getElementById('geocoderEngine').value) || 'auto';
+    const url = `/api/geocode?q=${encodeURIComponent(item.raw)}${restrict ? `&restrict=${restrict}` : ''}&engine=${encodeURIComponent(engine)}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('geocode http ' + res.status);
+    const data = await res.json();
+    if (Array.isArray(data) && data.length > 0) {
+      const best = data[0];
+      item.lat = parseFloat(best.lat);
+      item.lon = parseFloat(best.lon);
+      item.displayName = best.display_name || '';
+      if (best.address) {
+        const addr = best.address;
+        const road = addr.road || addr.residential || addr.pedestrian || addr.neighbourhood || addr.suburb;
+        const hn = addr.house_number || addr.housenumber || addr["addr:housenumber"];
+        const sl = ((road ? road : '') + (hn ? (' ' + hn) : '')).trim();
+        if (sl) item.street = sl;
+      }
+      item.status = 'found';
+      addOrUpdateMarker(item);
+      // Enriquecer con reverse (para mostrar info local más precisa)
+      try {
+        const r = await fetch(`/api/reverse?lat=${item.lat}&lon=${item.lon}`);
+        if (r.ok) {
+          const rev = await r.json();
+          if (rev && rev.address) {
+            const a = rev.address;
+            const barrio = a.suburb || a.neighbourhood || '';
+            const calle = a.road || '';
+            const altura = a.house_number || '';
+            const ciudad = a.city || a.town || 'CABA';
+            // Solo calle y altura para etiquetas

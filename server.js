@@ -36,26 +36,27 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true });
 });
 
-// Geocoding proxy to Nominatim (OpenStreetMap)
-// Usage: GET /api/geocode?q=Direccion%20a%20buscar
+// Geocoding proxy supporting Nominatim (OSM), Georef (AR) and Mapbox
+// Usage: GET /api/geocode?q=Direccion&engine=auto|georef|nominatim|mapbox&restrict=comuna9
 app.get('/api/geocode', async (req, res) => {
   const q = (req.query.q || '').toString().trim();
   const restrict = (req.query.restrict || '').toString() === 'comuna9';
+  const engine = 'nominatim';
   if (!q) return res.status(400).json({ error: 'Missing query parameter q' });
 
+  // Nominatim helpers
   const CABA_VIEWBOX = {
     left: -58.531,   // oeste
     top: -34.526,    // norte (lat menos negativa)
     right: -58.335,  // este
     bottom: -34.705  // sur (lat más negativa)
   };
-
-  const fetchSearch = async (query, useCabaBox = false) => {
+  const fetchNominatim = async (query, useCabaBox = false) => {
     const params = new URLSearchParams({
       q: query,
       format: 'jsonv2',
       addressdetails: '1',
-      limit: '10',
+      limit: '5',
       countrycodes: 'ar'
     });
     if (useCabaBox) {
@@ -76,40 +77,228 @@ app.get('/api/geocode', async (req, res) => {
     }
     return resp.json();
   };
+  const inComuna9_OSM = (addr) => {
+    if (!addr) return false;
+    const suburb = (addr.suburb || '').toLowerCase();
+    const cityDistrict = (addr.city_district || addr.district || '').toLowerCase();
+    const city = (addr.city || addr.town || '').toLowerCase();
+    const state = (addr.state || '').toLowerCase();
+    const matchesSuburb = ['liniers','mataderos','parque avellaneda'].includes(suburb);
+    const matchesDistrict = cityDistrict.includes('comuna 9');
+    const matchesCaba = city.includes('buenos aires') || state.includes('buenos aires') || city.includes('autónoma') || state.includes('autónoma') || city === 'caba' || state === 'caba' || city.includes('ciudad autonoma') || state.includes('ciudad autonoma');
+    return (matchesSuburb || matchesDistrict) && (matchesCaba || matchesSuburb);
+  };
+
+  // Georef helpers
+  const fetchGeoref = async (query, opts = {}) => {
+    const params = new URLSearchParams({ direccion: query, max: String(opts.max || 10) });
+    if (opts.provincia) params.set('provincia', opts.provincia);
+    if (opts.departamento) params.set('departamento', opts.departamento);
+    const url = `https://apis.datos.gob.ar/georef/api/direcciones?${params.toString()}`;
+    const resp = await fetchFn(url, {
+      headers: {
+        'Accept': 'application/json',
+        'Accept-Language': 'es-AR,es;q=0.9',
+        'User-Agent': 'GeneradorMapas/1.0 (local app)'
+      }
+    });
+    if (!resp.ok) {
+      const txt = await resp.text();
+      throw new Error(`Georef upstream error ${resp.status}: ${txt}`);
+    }
+    const json = await resp.json();
+    const dirs = Array.isArray(json?.direcciones) ? json.direcciones : [];
+    const mapped = dirs
+      .filter(d => d?.ubicacion && typeof d.ubicacion.lat === 'number' && typeof d.ubicacion.lon === 'number')
+      .map(d => {
+        const lat = d.ubicacion.lat;
+        const lon = d.ubicacion.lon;
+        const calle = d.calle?.nombre || '';
+        const altura = d.altura || d.puerta || '';
+        const localidad = d.localidad?.nombre || d.municipio?.nombre || '';
+        const provincia = d.provincia?.nombre || '';
+        const display_name = [calle && `${calle} ${altura}`.trim(), localidad, provincia, 'Argentina'].filter(Boolean).join(', ');
+        const address = {
+          road: calle || undefined,
+          house_number: altura || undefined,
+          city: localidad || undefined,
+          town: undefined,
+          state: provincia || undefined,
+          country: 'Argentina',
+          country_code: 'ar',
+          city_district: (d.departamento?.nombre || '').toLowerCase().includes('comuna') ? d.departamento?.nombre : undefined,
+          suburb: undefined
+        };
+        return { lat, lon, display_name, address, geocoder: 'georef', addressdetails: address, raw: d };
+      });
+    const filtered = restrict ? mapped.filter(r => {
+      const dep = r?.raw?.departamento?.nombre || '';
+      const depId = r?.raw?.departamento?.id || '';
+      const matchDep = dep.toLowerCase().includes('comuna 9') || depId === '02009';
+      const prov = r?.raw?.provincia?.nombre || '';
+      const matchProv = prov.toLowerCase().includes('ciudad autónoma de buenos aires') || prov.toLowerCase().includes('ciudad autonoma de buenos aires') || prov.toLowerCase() === 'caba';
+      return matchDep && matchProv;
+    }) : mapped;
+    return filtered;
+  };
+
+  // Intersection helpers
+  const parseIntersection = (s) => {
+    const norm = s.replace(/\s+/g, ' ').trim();
+    // common separators: " y ", " & ", "/"
+    const sepMatch = norm.match(/^(.*?)[\s]*(?:y|&|\/)[\s]*(.*)$/i);
+    if (!sepMatch) return null;
+    const a = sepMatch[1].trim();
+    const b = sepMatch[2].trim();
+    if (!a || !b) return null;
+    return { a, b };
+  };
+  const fetchGeorefIntersection = async (a, b, opts = {}) => {
+    const params = new URLSearchParams({
+      calle_nombre: a,
+      interseccion_nombre: b,
+      max: String(opts.max || 10)
+    });
+    if (opts.provincia) params.set('provincia', opts.provincia);
+    if (opts.departamento) params.set('departamento', opts.departamento);
+    const url = `https://apis.datos.gob.ar/georef/api/intersecciones?${params.toString()}`;
+    const resp = await fetchFn(url, { headers: { 'Accept': 'application/json', 'User-Agent': 'GeneradorMapas/1.0 (local app)' } });
+    if (!resp.ok) {
+      const txt = await resp.text();
+      throw new Error(`Georef intersections upstream error ${resp.status}: ${txt}`);
+    }
+    const json = await resp.json();
+    const arr = Array.isArray(json?.intersecciones) ? json.intersecciones : [];
+    const mapped = arr
+      .filter(it => it?.ubicacion && typeof it.ubicacion.lat === 'number' && typeof it.ubicacion.lon === 'number')
+      .map(it => {
+        const lat = it.ubicacion.lat;
+        const lon = it.ubicacion.lon;
+        const localidad = it.localidad?.nombre || it.municipio?.nombre || '';
+        const provincia = it.provincia?.nombre || '';
+        const display_name = [`${a} y ${b}`, localidad, provincia, 'Argentina'].filter(Boolean).join(', ');
+        const address = {
+          road: `${a} y ${b}`,
+          city: localidad || undefined,
+          state: provincia || undefined,
+          country: 'Argentina',
+          country_code: 'ar'
+        };
+        return { lat, lon, display_name, address, geocoder: 'georef', raw: it };
+      });
+    const filtered = restrict ? mapped.filter(r => {
+      const prov = (r?.address?.state || '').toLowerCase();
+      const loc = (r?.address?.city || '').toLowerCase();
+      const inCaba = prov.includes('ciudad aut') || prov === 'caba' || loc.includes('buenos aires');
+      // Cannot strictly verify Comuna 9 here; leave CABA filter
+      return inCaba;
+    }) : mapped;
+    return filtered;
+  };
+
+  // Mapbox helpers (requires MAPBOX_TOKEN)
+  const MAPBOX_TOKEN = process.env.MAPBOX_TOKEN || '';
+  const fetchMapbox = async (query) => {
+    if (!MAPBOX_TOKEN) return [];
+    const params = new URLSearchParams({
+      access_token: MAPBOX_TOKEN,
+      country: 'AR',
+      language: 'es',
+      limit: '10',
+      types: 'address,poi'
+    });
+    // Bias to CABA area if restricting
+    if (restrict) {
+      // BBOX aproximada CABA
+      params.set('bbox', '-58.531,-34.705,-58.335,-34.526');
+    }
+    const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?${params.toString()}`;
+    const resp = await fetchFn(url, { headers: { 'Accept': 'application/json', 'User-Agent': 'GeneradorMapas/1.0 (local app)' } });
+    if (!resp.ok) {
+      const txt = await resp.text();
+      throw new Error(`Mapbox upstream error ${resp.status}: ${txt}`);
+    }
+    const json = await resp.json();
+    const feats = Array.isArray(json?.features) ? json.features : [];
+    const mapped = feats.map(f => {
+      const [lon, lat] = (f.center && Array.isArray(f.center)) ? f.center : (f.geometry && Array.isArray(f.geometry.coordinates) ? f.geometry.coordinates : [null, null]);
+      const props = f.properties || {};
+      const ctx = Array.isArray(f.context) ? f.context : [];
+      const getCtx = (idPrefix) => (ctx.find(c => typeof c.id === 'string' && c.id.startsWith(idPrefix)) || {});
+      const neighborhood = (getCtx('neighbourhood')?.text_es || getCtx('neighborhood')?.text || props.neighborhood || '').toString();
+      const place = (getCtx('place')?.text_es || getCtx('place')?.text || props.place || '').toString();
+      const region = (getCtx('region')?.text_es || getCtx('region')?.text || props.region || '').toString();
+      const district = (getCtx('district')?.text_es || getCtx('district')?.text || props.district || '').toString();
+      const addressNumber = (props['address'] || '').toString();
+      const street = (props['street'] || f.text_es || f.text || '').toString();
+      const display_name = f.place_name_es || f.place_name || '';
+      const address = {
+        road: street || undefined,
+        house_number: addressNumber || undefined,
+        suburb: neighborhood || undefined,
+        city: place || undefined,
+        state: region || undefined,
+        city_district: district || undefined,
+        country: 'Argentina',
+        country_code: 'ar'
+      };
+      return { lat, lon, display_name, address, geocoder: 'mapbox', raw: f };
+    }).filter(r => typeof r.lat === 'number' && typeof r.lon === 'number');
+    // If restricting to Comuna 9, filter by known neighborhoods
+    const filtered = restrict ? mapped.filter(r => {
+      const sub = (r?.address?.suburb || '').toLowerCase();
+      const place = (r?.address?.city || '').toLowerCase();
+      const region = (r?.address?.state || '').toLowerCase();
+      const inCaba = place.includes('buenos aires') || region.includes('buenos aires') || place === 'caba' || region === 'caba' || place.includes('ciudad autonoma') || region.includes('ciudad autonoma');
+      const inCom9 = ['liniers','mataderos','parque avellaneda'].includes(sub);
+      return inCaba && inCom9;
+    }) : mapped;
+    return filtered;
+  };
 
   try {
-    let data = await fetchSearch(q, restrict); // cuando se restringe, acoto a CABA
-
-    const inComuna9 = (addr) => {
-      if (!addr) return false;
-      const suburb = (addr.suburb || '').toLowerCase();
-      const cityDistrict = (addr.city_district || addr.district || '').toLowerCase();
-      const city = (addr.city || addr.town || '').toLowerCase();
-      const state = (addr.state || '').toLowerCase();
-      const matchesSuburb = ['liniers','mataderos','parque avellaneda'].includes(suburb);
-      const matchesDistrict = cityDistrict.includes('comuna 9');
-      const matchesCaba = city.includes('buenos aires') || state.includes('buenos aires') || city.includes('autónoma') || state.includes('autónoma') || city === 'caba' || state === 'caba' || city.includes('ciudad autonoma') || state.includes('ciudad autonoma');
-      // Acepto si (barrio o comuna) y (CABA por city/state) — pero si barrio coincide, no exijo city si el state ya es BA
-      return (matchesSuburb || matchesDistrict) && (matchesCaba || matchesSuburb);
-    };
-
-    if (restrict) {
-      data = (Array.isArray(data) ? data : []).filter(r => inComuna9(r.address));
-      if (data.length === 0) {
-        // Reintento con sesgo explícito a Comuna 9, CABA
-        const biased1 = `${q}, Comuna 9, Ciudad Autónoma de Buenos Aires, Argentina`;
-        const data2 = await fetchSearch(biased1, true);
-        data = (Array.isArray(data2) ? data2 : []).filter(r => inComuna9(r.address));
+    // Fast path: if query looks like an intersection, try Georef intersecciones first
+    const inter = parseIntersection(q);
+    if (inter) {
+      const opts = restrict ? { provincia: 'Ciudad Aut\u00F3noma de Buenos Aires', departamento: 'Comuna 9', max: 10 } : { max: 10 };
+      let results = await fetchGeorefIntersection(inter.a, inter.b, opts);
+      if (restrict && results.length === 0) {
+        results = await fetchGeorefIntersection(inter.a, inter.b, { provincia: 'Ciudad Aut\u00F3noma de Buenos Aires', max: 10 });
       }
-      if (data.length === 0) {
-        // Otro intento con CABA (CABA/Capital Federal)
-        const biased2 = `${q}, CABA, Argentina`;
-        const data3 = await fetchSearch(biased2, true);
-        data = (Array.isArray(data3) ? data3 : []).filter(r => inComuna9(r.address));
+      if (results.length > 0) {
+        return res.json(results);
       }
     }
+    const tryGeoref = async () => {
+      const opts = restrict ? { provincia: 'Ciudad Autónoma de Buenos Aires', departamento: 'Comuna 9', max: 10 } : { max: 10 };
+      const r = await fetchGeoref(q, opts);
+      if (restrict && r.length === 0) {
+        return fetchGeoref(q, { provincia: 'Ciudad Autónoma de Buenos Aires', max: 10 });
+      }
+      return r;
+    };
+    const tryNominatim = async () => {
+      let data = await fetchNominatim(q, restrict);
+      if (restrict) {
+        data = (Array.isArray(data) ? data : []).filter(r => inComuna9_OSM(r.address));
+        if (data.length === 0) {
+          const biased1 = `${q}, Comuna 9, Ciudad Autónoma de Buenos Aires, Argentina`;
+          const data2 = await fetchNominatim(biased1, true);
+          data = (Array.isArray(data2) ? data2 : []).filter(r => inComuna9_OSM(r.address));
+        }
+        if (data.length === 0) {
+          const biased2 = `${q}, CABA, Argentina`;
+          const data3 = await fetchNominatim(biased2, true);
+          data = (Array.isArray(data3) ? data3 : []).filter(r => inComuna9_OSM(r.address));
+        }
+      }
+      return data;
+    };
 
-    res.json(data);
+    // Always use Nominatim
+    const results = await tryNominatim();
+
+    res.json(results);
   } catch (err) {
     console.error('Geocode error:', err);
     res.status(500).json({ error: 'Geocode failed' });
@@ -130,6 +319,7 @@ app.get('/api/reverse', async (req, res) => {
       lon: String(lon),
       format: 'jsonv2',
       addressdetails: '1',
+      zoom: '18',
       namedetails: '1',
       extratags: '1'
     });

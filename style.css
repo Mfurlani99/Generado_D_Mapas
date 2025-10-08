@@ -104,17 +104,17 @@ input.coord { width: 45%; background: #0f1320; color: var(--text); border: 1px s
 
 /* Marker DivIcon styling */
 .marker {
-  --c: #2b7fff; /* default color */
+  --c: #000000; /* default color black for print */
   width: 26px; height: 26px;
   border-radius: 50%;
   background: var(--c);
   border: 2px solid #ffffff;
   box-shadow: 0 0 0 2px rgba(0,0,0,0.2);
 }
-.marker.tipoA { --c: #2b7fff; }
-.marker.tipoB { --c: #2bbf6b; }
-.marker.tipoC { --c: #ff5c5c; }
-.marker.tipoD { --c: #f5a623; }
+.marker.tipoA { --c: #000000; }
+.marker.tipoB { --c: #000000; }
+.marker.tipoC { --c: #000000; }
+.marker.tipoD { --c: #000000; }
 
 /* Responsive */
 @media (max-width: 900px) {
@@ -135,11 +135,38 @@ input.coord { width: 45%; background: #0f1320; color: var(--text); border: 1px s
   font-weight: 700;
   font-size: 14px;
   line-height: 1.25;
-  white-space: nowrap;
+  white-space: normal; /* permitir varias líneas */
+  -webkit-print-color-adjust: exact; print-color-adjust: exact;
 }
 
 /* Popup: cross-street line darker and bold */
 .leaflet-popup-content .cross {
   color: #0a0a0a;
   font-weight: 700;
+}
+
+/* Cluster circle (markercluster) en negro */
+.marker-cluster-small,
+.marker-cluster-medium,
+.marker-cluster-large {
+  background-color: rgba(0,0,0,0.85) !important;
+}
+.marker-cluster div {
+  background-color: #000000 !important;
+  color: #ffffff !important;
+  border: 2px solid #ffffff !important;
+}
+.marker-cluster {
+  border: none !important;
+}
+
+/* Estilos de impresión */
+@media print {
+  body { background: #ffffff; color: #000000; }
+  .app { grid-template-columns: 1fr; }
+  .sidebar { display: none !important; }
+  .map-wrap { height: 100vh !important; }
+  #map { position: fixed; inset: 0; }
+  .leaflet-control-container { filter: none; }
+  .leaflet-tooltip.addr-label { font-size: 13px; border-color: rgba(0,0,0,0.3); }
 }

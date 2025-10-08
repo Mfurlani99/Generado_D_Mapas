@@ -34,3 +34,21 @@ Abre `http://localhost:3000` en tu navegador.
 - Los marcadores se agrupan con `leaflet.markercluster` para evitar superposiciones. Las etiquetas se muestran en la ventana emergente (popup) para minimizar el ruido visual.
 - El guardado se realiza en `data/addresses.json`.
 
+## Geocodificación rápida (Mapbox)
+
+- Para mayor velocidad y mejores aciertos, puedes usar Mapbox como motor.
+- Requiere token de acceso (`MAPBOX_TOKEN`). Crea uno en tu cuenta de Mapbox.
+- Desde CMD (Windows):
+
+```
+set MAPBOX_TOKEN=tu_token_aqui && npm start
+```
+
+- En la app elige “Mapbox (rápido, requiere token)” o deja “Auto” (Auto usará Mapbox si el token está presente y si no, intentará Georef y luego Nominatim).
+
+## Geocodificación con Georef (Argentina)
+
+- Se agregó soporte para el API Georef (`apis.datos.gob.ar/georef/api`).
+- En la barra lateral podrás elegir el motor de geocodificación: `Auto (Georef + Nominatim)`, `Georef (Argentina)` o `Nominatim (OSM)`.
+- En modo `Auto`, se intenta primero Georef y, si no hay resultados, se recurre a Nominatim.
+- La opción "Restringir resultados a Comuna 9 (CABA)" aplica filtros/bias tanto para Georef como para Nominatim.

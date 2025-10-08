@@ -1,0 +1,70 @@
+const state = {
+  items: [], // { id, raw, type, status, lat, lon, displayName, marker }
+  awaitingPickForId: null
+};
+
+// Mapa y capas
+let map, cluster, labelsLayer;
+let labelTimer = null;
+const MERGE_PX = 28; // distancia en pixeles para unificar etiquetas
+
+function initMap() {
+  map = L.map('map', {
+    preferCanvas: true,
+    zoomControl: true
+  }).setView([40.4168, -3.7038], 5); // España por defecto
+
+  // CartoDB Positron para estilo claro y etiquetas legibles
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    maxZoom: 19,
+    crossOrigin: true
+  }).addTo(map);
+
+  cluster = L.markerClusterGroup({
+    showCoverageOnHover: false,
+    spiderfyOnMaxZoom: true,
+    maxClusterRadius: 50
+  });
+  map.addLayer(cluster);
+
+  // Pane para etiquetas por encima de los marcadores
+  map.createPane('labelsPane');
+  map.getPane('labelsPane').style.zIndex = 650;
+  map.getPane('labelsPane').style.pointerEvents = 'none';
+  labelsLayer = L.layerGroup().addTo(map);
+
+  map.on('click', onMapClickForManual);
+  map.on('moveend zoomend', updateLabelsThrottled);
+  window.addEventListener('resize', updateLabelsThrottled);
+}
+
+function newId() { return Math.random().toString(36).slice(2, 10); }
+
+function parseInputLines() {
+  const ta = document.getElementById('addressesInput');
+  const lines = ta.value.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+  const items = lines.map(raw => ({ id: newId(), raw, type: 'A', status: 'pending' }));
+  return items;
+}
+
+function renderList() {
+  const wrap = document.getElementById('addressList');
+  wrap.innerHTML = '';
+  for (const it of state.items) {
+    const div = document.createElement('div');
+    div.className = 'addr-item';
+    div.dataset.id = it.id;
+
+    const top = document.createElement('div');
+    top.className = 'addr-top';
+    const main = document.createElement('div');
+    main.className = 'addr-main';
+    main.textContent = it.raw;
+    top.appendChild(main);
+    const status = document.createElement('div');
+    status.className = 'addr-status ' +
+      (it.status === 'found' ? 'status-found' : it.status === 'manual' ? 'status-manual' : it.status === 'notfound' ? 'status-notfound' : 'status-pending');
+    status.textContent = labelStatus(it);
+    top.appendChild(status);
+    div.appendChild(top);

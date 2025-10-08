@@ -1,0 +1,141 @@
+        const address = {
+          road: calle || undefined,
+          house_number: altura || undefined,
+          city: localidad || undefined,
+          town: undefined,
+          state: provincia || undefined,
+          country: 'Argentina',
+          country_code: 'ar',
+          city_district: (d.departamento?.nombre || '').toLowerCase().includes('comuna') ? d.departamento?.nombre : undefined,
+          suburb: undefined
+        };
+        return { lat, lon, display_name, address, geocoder: 'georef', addressdetails: address, raw: d };
+      });
+    const filtered = restrict ? mapped.filter(r => {
+      const dep = r?.raw?.departamento?.nombre || '';
+      const depId = r?.raw?.departamento?.id || '';
+      const matchDep = dep.toLowerCase().includes('comuna 9') || depId === '02009';
+      const prov = r?.raw?.provincia?.nombre || '';
+      const matchProv = prov.toLowerCase().includes('ciudad autónoma de buenos aires') || prov.toLowerCase().includes('ciudad autonoma de buenos aires') || prov.toLowerCase() === 'caba';
+      return matchDep && matchProv;
+    }) : mapped;
+    return filtered;
+  };
+
+  // Mapbox helpers (requires MAPBOX_TOKEN)
+  const MAPBOX_TOKEN = process.env.MAPBOX_TOKEN || '';
+  const fetchMapbox = async (query) => {
+    if (!MAPBOX_TOKEN) return [];
+    const params = new URLSearchParams({
+      access_token: MAPBOX_TOKEN,
+      country: 'AR',
+      language: 'es',
+      limit: '10',
+      types: 'address,poi'
+    });
+    // Bias to CABA area if restricting
+    if (restrict) {
+      // BBOX aproximada CABA
+      params.set('bbox', '-58.531,-34.705,-58.335,-34.526');
+    }
+    const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?${params.toString()}`;
+    const resp = await fetchFn(url, { headers: { 'Accept': 'application/json', 'User-Agent': 'GeneradorMapas/1.0 (local app)' } });
+    if (!resp.ok) {
+      const txt = await resp.text();
+      throw new Error(`Mapbox upstream error ${resp.status}: ${txt}`);
+    }
+    const json = await resp.json();
+    const feats = Array.isArray(json?.features) ? json.features : [];
+    const mapped = feats.map(f => {
+      const [lon, lat] = (f.center && Array.isArray(f.center)) ? f.center : (f.geometry && Array.isArray(f.geometry.coordinates) ? f.geometry.coordinates : [null, null]);
+      const props = f.properties || {};
+      const ctx = Array.isArray(f.context) ? f.context : [];
+      const getCtx = (idPrefix) => (ctx.find(c => typeof c.id === 'string' && c.id.startsWith(idPrefix)) || {});
+      const neighborhood = (getCtx('neighbourhood')?.text_es || getCtx('neighborhood')?.text || props.neighborhood || '').toString();
+      const place = (getCtx('place')?.text_es || getCtx('place')?.text || props.place || '').toString();
+      const region = (getCtx('region')?.text_es || getCtx('region')?.text || props.region || '').toString();
+      const district = (getCtx('district')?.text_es || getCtx('district')?.text || props.district || '').toString();
+      const addressNumber = (props['address'] || '').toString();
+      const street = (props['street'] || f.text_es || f.text || '').toString();
+      const display_name = f.place_name_es || f.place_name || '';
+      const address = {
+        road: street || undefined,
+        house_number: addressNumber || undefined,
+        suburb: neighborhood || undefined,
+        city: place || undefined,
+        state: region || undefined,
+        city_district: district || undefined,
+        country: 'Argentina',
+        country_code: 'ar'
+      };
+      return { lat, lon, display_name, address, geocoder: 'mapbox', raw: f };
+    }).filter(r => typeof r.lat === 'number' && typeof r.lon === 'number');
+    // If restricting to Comuna 9, filter by known neighborhoods
+    const filtered = restrict ? mapped.filter(r => {
+      const sub = (r?.address?.suburb || '').toLowerCase();
+      const place = (r?.address?.city || '').toLowerCase();
+      const region = (r?.address?.state || '').toLowerCase();
+      const inCaba = place.includes('buenos aires') || region.includes('buenos aires') || place === 'caba' || region === 'caba' || place.includes('ciudad autonoma') || region.includes('ciudad autonoma');
+      const inCom9 = ['liniers','mataderos','parque avellaneda'].includes(sub);
+      return inCaba && inCom9;
+    }) : mapped;
+    return filtered;
+  };
+
+  try {
+    const tryGeoref = async () => {
+      const opts = restrict ? { provincia: 'Ciudad Autónoma de Buenos Aires', departamento: 'Comuna 9', max: 10 } : { max: 10 };
+      const r = await fetchGeoref(q, opts);
+      if (restrict && r.length === 0) {
+        return fetchGeoref(q, { provincia: 'Ciudad Autónoma de Buenos Aires', max: 10 });
+      }
+      return r;
+    };
+    const tryNominatim = async () => {
+      let data = await fetchNominatim(q, restrict);
+      if (restrict) {
+        data = (Array.isArray(data) ? data : []).filter(r => inComuna9_OSM(r.address));
+        if (data.length === 0) {
+          const biased1 = `${q}, Comuna 9, Ciudad Autónoma de Buenos Aires, Argentina`;
+          const data2 = await fetchNominatim(biased1, true);
+          data = (Array.isArray(data2) ? data2 : []).filter(r => inComuna9_OSM(r.address));
+        }
+        if (data.length === 0) {
+          const biased2 = `${q}, CABA, Argentina`;
+          const data3 = await fetchNominatim(biased2, true);
+          data = (Array.isArray(data3) ? data3 : []).filter(r => inComuna9_OSM(r.address));
+        }
+      }
+      return data;
+    };
+
+    let results = [];
+    if (engine === 'mapbox') {
+      results = await fetchMapbox(q);
+      if (restrict && results.length === 0) {
+        // Try biasing by adding labels
+        const biased = `${q}, Comuna 9, CABA, Argentina`;
+        results = await fetchMapbox(biased);
+      }
+    } else if (engine === 'georef') {
+      results = await tryGeoref();
+    } else if (engine === 'nominatim') {
+      results = await tryNominatim();
+    } else {
+      // auto: prefer Mapbox if token is present
+      if (MAPBOX_TOKEN) {
+        results = await fetchMapbox(q);
+      }
+      if (!Array.isArray(results) || results.length === 0) {
+        results = await tryGeoref();
+      }
+      if (!Array.isArray(results) || results.length === 0) {
+        results = await tryNominatim();
+      }
+    }
+
+    res.json(results);
+  } catch (err) {
+    console.error('Geocode error:', err);
+    res.status(500).json({ error: 'Geocode failed' });
+  }

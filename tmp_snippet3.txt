@@ -1,0 +1,23 @@
+    const avgPx = group.reduce((acc, g) => { acc.x += g.p.x; acc.y += g.p.y; return acc; }, { x: 0, y: 0 });
+    avgPx.x /= group.length; avgPx.y /= group.length;
+    const labelLL = map.containerPointToLatLng(avgPx);
+
+    // Texto: unir direcciones si hay más de una
+    const texts = group.map(g => escapeHtml(shortLabel(g.it)));
+    const text = texts.join('<br/>');
+
+    const tip = L.tooltip({
+      permanent: true,
+      direction: 'top',
+      offset: [0, -10],
+      pane: 'labelsPane',
+      className: 'addr-label'
+    })
+    .setLatLng(labelLL)
+    .setContent(text);
+
+    labelsLayer.addLayer(tip);
+  }
+}
+
+window.addEventListener('DOMContentLoaded', () => {
