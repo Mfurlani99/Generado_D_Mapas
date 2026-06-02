@@ -340,7 +340,7 @@ function applyClusterDistance() {
 function updatePdfPreset() {
   const preset = document.getElementById('pdfPreset').value;
   const orientation = document.getElementById('orientation').value;
-  const sizes = { a4: [210, 297], a3: [297, 420], letter: [216, 279] };
+  const sizes = { a4: [210, 297], a3: [297, 420], letter: [216, 279], 'oficio-mx': [216, 340] };
   if (preset === 'custom') return;
   let [w, h] = sizes[preset];
   if (orientation === 'landscape') [w, h] = [h, w];

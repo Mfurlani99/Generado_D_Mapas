@@ -20,7 +20,7 @@ Programa web local para mapear direcciones, etiquetarlas y exportar el resultado
 - Control de distancia de agrupación en píxeles.
 - Orden manual de direcciones mediante flechas.
 - Etiquetas movibles y reacomodables automáticamente.
-- Exportación a PDF en A4, A3, Carta o tamaño personalizado.
+- Exportación a PDF en A4, A3, Carta, Oficio mexicano o tamaño personalizado.
 
 ## Nota
 
