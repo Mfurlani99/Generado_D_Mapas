@@ -1,54 +1,27 @@
-# Generador de Mapas
+# Mapeador de direcciones
 
-Aplicación web local con Node.js + Express y Leaflet para:
+Programa web local para mapear direcciones, etiquetarlas y exportar el resultado a PDF.
 
-- Ingresar una o varias direcciones (una por línea)
-- Geocodificar con Nominatim (OpenStreetMap)
-- Agregar manualmente direcciones no encontradas (lat/lon o clic en el mapa)
-- Visualizar en mapa con estilo claro y clustering de marcadores
-- Guardar/cargar las direcciones en JSON local
-- Exportar el mapa a PNG
+## Uso
 
-## Requisitos
+1. Descomprimir el ZIP.
+2. Abrir `index.html` con Chrome o Edge.
+3. Pegar una dirección por línea.
+4. Presionar **Mapear direcciones**.
+5. Ajustar etiquetas, tamaño de marcas, tamaño de letra y agrupación.
+6. Exportar con **Generar PDF**.
 
-- Node.js 18 o superior (recomendado)
+## Cambios incluidos
 
-## Instalación
+- Control para agrandar o achicar las marcas.
+- Búsqueda optimizada para Ciudad Autónoma de Buenos Aires y Comuna 9.
+- Opción para limitar los resultados a Comuna 9.
+- Agrupación automática de puntos muy cercanos. Por ejemplo, si los puntos 1 y 2 quedan superpuestos, se muestra un marcador agrupado con `1,2`.
+- Control de distancia de agrupación en píxeles.
+- Orden manual de direcciones mediante flechas.
+- Etiquetas movibles y reacomodables automáticamente.
+- Exportación a PDF en A4, A3, Carta o tamaño personalizado.
 
-```bash
-npm install
-```
+## Nota
 
-## Inicio
-
-```bash
-npm start
-```
-
-Abre `http://localhost:3000` en tu navegador.
-
-## Notas
-
-- Se usa Leaflet con un fondo tipo "Positron" (CARTO) para un estilo claro similar a mapas limpios con etiquetas legibles.
-- La geocodificación se realiza mediante un proxy local (`/api/geocode`) hacia Nominatim con un `User-Agent` adecuado. Úsalo de forma responsable.
-- Los marcadores se agrupan con `leaflet.markercluster` para evitar superposiciones. Las etiquetas se muestran en la ventana emergente (popup) para minimizar el ruido visual.
-- El guardado se realiza en `data/addresses.json`.
-
-## Geocodificación rápida (Mapbox)
-
-- Para mayor velocidad y mejores aciertos, puedes usar Mapbox como motor.
-- Requiere token de acceso (`MAPBOX_TOKEN`). Crea uno en tu cuenta de Mapbox.
-- Desde CMD (Windows):
-
-```
-set MAPBOX_TOKEN=tu_token_aqui && npm start
-```
-
-- En la app elige “Mapbox (rápido, requiere token)” o deja “Auto” (Auto usará Mapbox si el token está presente y si no, intentará Georef y luego Nominatim).
-
-## Geocodificación con Georef (Argentina)
-
-- Se agregó soporte para el API Georef (`apis.datos.gob.ar/georef/api`).
-- En la barra lateral podrás elegir el motor de geocodificación: `Auto (Georef + Nominatim)`, `Georef (Argentina)` o `Nominatim (OSM)`.
-- En modo `Auto`, se intenta primero Georef y, si no hay resultados, se recurre a Nominatim.
-- La opción "Restringir resultados a Comuna 9 (CABA)" aplica filtros/bias tanto para Georef como para Nominatim.
+La búsqueda usa OpenStreetMap/Nominatim. Necesita internet. Algunas direcciones pueden requerir escribir el nombre de calle sin abreviaturas si el servicio externo no las reconoce.

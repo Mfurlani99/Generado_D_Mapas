@@ -1,61 +1,85 @@
 <!doctype html>
 <html lang="es">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Generador de Mapas</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
-    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
-    <link rel="stylesheet" href="style.css" />
-  </head>
-  <body>
-    <div class="app">
-      <aside class="sidebar">
-        <h1>Generador de Mapas</h1>
-        <p class="hint">Ingresa una dirección por línea. Podrás elegir el tipo de marcador por cada dirección.</p>
-        <textarea id="addressesInput" placeholder="Ejemplo:\nAv. Siempre Viva 742, Springfield\nCalle Falsa 123, Ciudad\n..." rows="6"></textarea>
-        <div class="controls">
-          <button id="geocodeBtn">Buscar y mostrar en el mapa</button>
-        </div>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mapeador de direcciones</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <aside class="panel">
+    <h1>Mapeador de direcciones</h1>
+    <p class="hint">Pegá una dirección por línea. El sistema busca dentro de Comuna 9, agrupa puntos muy cercanos, permite mover etiquetas/marcadores y exporta a PDF.</p>
 
-        <div class="controls" style="margin-top: 6px">
-          <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)">
-            <input type="checkbox" id="restrictComuna9" checked />
-            Restringir resultados a Comuna 9 (CABA)
-          </label>
-        </div>
+    <label>Direcciones</label>
+    <textarea id="addressInput" rows="12" placeholder="Pieres 585&#10;Pola 2222&#10;Av. Cnel. Ramón L. Falcón 6814"></textarea>
 
-        <!-- Motor fijo: Nominatim (OSM) -->
-
-        <div class="legend">
-          <span class="legend-item tipoA">A</span>
-          <span class="legend-item tipoB">B</span>
-          <span class="legend-item tipoC">C</span>
-          <span class="legend-item tipoD">D</span>
-          <span class="legend-label">Tipos de marcadores</span>
-        </div>
-
-        <h2>Direcciones</h2>
-        <div id="addressList" class="address-list"></div>
-
-        <div class="extras">
-          <button id="saveBtn" class="secondary">Guardar JSON</button>
-          <button id="loadBtn" class="secondary">Cargar guardado</button>
-          <button id="exportBtn" class="secondary">Exportar PNG</button>
-          <button id="exportPdfBtn" class="secondary">Exportar PDF</button>
-          <button id="printBtn" class="secondary">Imprimir</button>
-        </div>
-      </aside>
-      <main class="map-wrap">
-        <div id="map"></div>
-      </main>
+    <div class="row">
+      <button id="mapBtn">Mapear direcciones</button>
+      <button id="clearBtn" class="secondary">Limpiar</button>
     </div>
 
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
-    <script src="script.js"></script>
-  </body>
-  </html>
+    <div id="status" class="status">Listo.</div>
+
+    <div class="settings">
+      <label class="check"><input id="onlyComuna9" type="checkbox" checked /> Limitar resultados a Comuna 9</label>
+
+      <label>Tamaño de marcas: <span id="markerSizeValue">34</span> px</label>
+      <input id="markerSize" type="range" min="22" max="70" value="34" />
+
+      <label>Tamaño de letra: <span id="fontSizeValue">13</span> px</label>
+      <input id="fontSize" type="range" min="8" max="32" value="13" />
+
+      <label>Agrupar puntos a menos de: <span id="clusterPxValue">38</span> px</label>
+      <input id="clusterPx" type="range" min="10" max="120" value="38" />
+
+      <label>Zoom del mapa</label>
+      <input id="zoomRange" type="range" min="10" max="19" value="13" />
+
+      <label>Título del PDF</label>
+      <input id="titleInput" type="text" value="Mapa de direcciones - Comuna 9" />
+
+      <label>Tamaño del PDF</label>
+      <select id="pdfPreset">
+        <option value="a4">A4</option>
+        <option value="a3">A3</option>
+        <option value="letter">Carta</option>
+        <option value="custom">Personalizado</option>
+      </select>
+
+      <div class="row">
+        <label class="mini">Ancho mm<input id="pdfW" type="number" value="297" /></label>
+        <label class="mini">Alto mm<input id="pdfH" type="number" value="210" /></label>
+      </div>
+
+      <label>Orientación</label>
+      <select id="orientation">
+        <option value="landscape">Horizontal</option>
+        <option value="portrait">Vertical</option>
+      </select>
+    </div>
+
+    <div class="row">
+      <button id="arrangeBtn">Acomodar etiquetas</button>
+      <button id="fitBtn" class="secondary">Ver todo</button>
+    </div>
+
+    <button id="pdfBtn" class="export">Generar PDF</button>
+
+    <h2>Orden de direcciones</h2>
+    <p class="hint small">Usá ↑ ↓ para cambiar el número visible en cada marca. También podés editar el texto de la etiqueta.</p>
+    <div id="list" class="address-list"></div>
+  </aside>
+
+  <main class="map-wrap">
+    <div id="mapHeader"><strong id="mapTitle">Mapa de direcciones - Comuna 9</strong></div>
+    <div id="map"></div>
+  </main>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
