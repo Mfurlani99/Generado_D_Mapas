@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+  <button id="togglePanelBtn" class="hub-toggle" type="button">Ocultar panel</button>
   <aside class="panel">
     <h1>Mapeador de direcciones</h1>
     <p class="hint">Pegá una dirección por línea. El sistema busca dentro de Comuna 9, agrupa puntos muy cercanos, permite mover etiquetas/marcadores y exporta a PDF.</p>
@@ -28,8 +29,10 @@
       <label>Tamaño de marcas: <span id="markerSizeValue">34</span> px</label>
       <input id="markerSize" type="range" min="22" max="70" value="34" />
 
-      <label>Tamaño de letra: <span id="fontSizeValue">13</span> px</label>
+      <label>Tamaño de texto en mapa: <span id="fontSizeValue">13</span> px</label>
       <input id="fontSize" type="range" min="8" max="32" value="13" />
+
+      <label class="check"><input id="showLabels" type="checkbox" /> Mostrar textos en el mapa</label>
 
       <label>Agrupar puntos a menos de: <span id="clusterPxValue">38</span> px</label>
       <input id="clusterPx" type="range" min="10" max="120" value="38" />
@@ -69,13 +72,20 @@
     <button id="pdfBtn" class="export">Generar PDF</button>
 
     <h2>Orden de direcciones</h2>
-    <p class="hint small">Usá ↑ ↓ para cambiar el número visible en cada marca. También podés editar el texto de la etiqueta.</p>
+    <p class="hint small">Usá ↑ ↓ para cambiar el número visible. Podés editar, rebuscar, reubicar con un clic en el mapa o borrar cada punto.</p>
     <div id="list" class="address-list"></div>
   </aside>
 
   <main class="map-wrap">
     <div id="mapHeader"><strong id="mapTitle">Mapa de direcciones - Comuna 9</strong></div>
-    <div id="map"></div>
+    <div class="print-layout">
+      <div id="map"></div>
+      <aside id="mapLegend" class="map-legend">
+        <h2>Leyenda</h2>
+        <p id="legendCount">0 direcciones</p>
+        <ol id="legendList"></ol>
+      </aside>
+    </div>
   </main>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>

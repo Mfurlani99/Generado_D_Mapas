@@ -37,9 +37,10 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 }).addTo(map);
 
 let entries = [];
-let lineLayer = L.layerGroup().addTo(map);
 let clusterLayer = L.layerGroup().addTo(map);
 let clusterGroups = [];
+let relocatingEntry = null;
+const geocodeDelayMs = 1100;
 
 function normalizeAddress(raw) {
   return raw.trim().replace(/,$/, '').replace(/\s+/g, ' ');
@@ -55,16 +56,59 @@ function stripAccents(text) {
   return text.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }
 
+function uniqueValues(values) {
+  return [...new Set(values.map(v => normalizeAddress(v)).filter(Boolean))];
+}
+
+function expandAddress(address) {
+  return normalizeAddress(address)
+    .replace(/(^|\s)Avda?\.?(?=\s|$)/gi, '$1Avenida')
+    .replace(/(^|\s)Av\.?(?=\s|$)/gi, '$1Avenida')
+    .replace(/(^|\s)Cnel\.?(?=\s|$)/gi, '$1Coronel')
+    .replace(/(^|\s)Dr\.?(?=\s|$)/gi, '$1Doctor')
+    .replace(/(^|\s)Gral\.?(?=\s|$)/gi, '$1General')
+    .replace(/(^|\s)Sta\.?(?=\s|$)/gi, '$1Santa')
+    .replace(/(^|\s)Sto\.?(?=\s|$)/gi, '$1Santo')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function parseStreetNumber(address) {
-  const cleaned = stripAccents(address)
-    .replace(/Av\.?/gi, 'Avenida')
-    .replace(/Cnel\.?/gi, 'Coronel')
-    .replace(/Dr\.?/gi, 'Doctor')
-    .replace(/Ramón/gi, 'Ramon')
-    .replace(/García/gi, 'Garcia');
-  const m = cleaned.match(/^(.*?)[,\s]+(\d{1,5})$/);
+  const cleaned = stripAccents(expandAddress(address));
+  const m = cleaned.match(/^(.*?)[,\s]+(\d{1,5})(?:\s.*)?$/);
   if (!m) return { street: cleaned, number: '' };
   return { street: m[1].trim(), number: m[2].trim() };
+}
+
+function streetAlternatives(street) {
+  const options = [street];
+  const low = stripAccents(street.toLowerCase());
+  if (low.includes('ramon') && low.includes('falcon')) {
+    options.push('Avenida Coronel Ramon Lorenzo Falcon');
+    options.push('Coronel Ramon Lorenzo Falcon');
+    options.push('Avenida Coronel Ramon L Falcon');
+  }
+  return uniqueValues(options);
+}
+
+function addressVariants(address) {
+  const expanded = expandAddress(address);
+  const { street, number } = parseStreetNumber(expanded);
+  const variants = [address, expanded];
+  if (number && street) {
+    streetAlternatives(street).forEach(name => {
+      variants.push(`${name} ${number}`);
+      variants.push(`${number} ${name}`);
+    });
+  }
+  return uniqueValues(variants);
+}
+
+function streetWords(street) {
+  const stop = new Set(['avenida', 'calle', 'coronel', 'doctor', 'general', 'santa', 'santo', 'presidente']);
+  return stripAccents(street.toLowerCase())
+    .split(/[^a-z0-9]+/i)
+    .filter(word => word.length > 2 && !stop.has(word));
 }
 
 function pointInPolygon(lat, lng, polygon) {
@@ -89,15 +133,59 @@ function scoreResult(item, address) {
   const addr = stripAccents(address.toLowerCase());
   const { street, number } = parseStreetNumber(address);
   const streetLow = stripAccents(street.toLowerCase());
+  const words = streetWords(streetLow);
+  const matchedWords = words.filter(word => display.includes(word)).length;
+  const houseNumber = item.address?.house_number ? String(item.address.house_number) : '';
 
-  if (isInsideComuna9(lat, lon)) score += 1000;
-  if (display.includes('comuna 9')) score += 150;
-  if (display.includes('ciudad autonoma de buenos aires')) score += 100;
-  if (display.includes(streetLow)) score += 80;
-  if (number && display.includes(number)) score += 50;
+  if (isInsideComuna9(lat, lon)) score += 1200;
+  if (display.includes('comuna 9')) score += 180;
+  if (display.includes('mataderos') || display.includes('liniers') || display.includes('parque avellaneda')) score += 120;
+  if (display.includes('ciudad autonoma de buenos aires') || display.includes('buenos aires')) score += 100;
+  if (streetLow && display.includes(streetLow)) score += 120;
+  if (words.length) score += Math.round((matchedWords / words.length) * 130);
+  if (number && houseNumber === number) score += 120;
+  if (number && display.includes(number)) score += 60;
   if (display.includes(addr)) score += 80;
   if (item.type === 'house' || item.addresstype === 'house') score += 25;
   return score;
+}
+
+function buildGeocodeQueries(address) {
+  const viewbox = `${comuna9Bounds.getWest()},${comuna9Bounds.getNorth()},${comuna9Bounds.getEast()},${comuna9Bounds.getSouth()}`;
+  const variants = addressVariants(address);
+  const { street, number } = parseStreetNumber(address);
+  const contexts = [
+    'Comuna 9, Ciudad Autonoma de Buenos Aires, Argentina',
+    'Mataderos, Ciudad Autonoma de Buenos Aires, Argentina',
+    'Liniers, Ciudad Autonoma de Buenos Aires, Argentina',
+    'Parque Avellaneda, Ciudad Autonoma de Buenos Aires, Argentina',
+    'CABA, Argentina'
+  ];
+  const queries = [];
+
+  if (street && number) {
+    streetAlternatives(street).forEach(name => {
+      queries.push({ format: 'json', limit: '10', countrycodes: 'ar', addressdetails: '1', bounded: '1', viewbox, street: `${number} ${name}`, city: 'Ciudad Autonoma de Buenos Aires', country: 'Argentina' });
+    });
+  }
+
+  variants.slice(0, 5).forEach(variant => {
+    contexts.forEach(context => {
+      queries.push({ format: 'json', limit: '10', countrycodes: 'ar', addressdetails: '1', bounded: '1', viewbox, q: `${variant}, ${context}` });
+    });
+  });
+
+  variants.slice(0, 3).forEach(variant => {
+    queries.push({ format: 'json', limit: '10', countrycodes: 'ar', addressdetails: '1', q: `${variant}, Ciudad Autonoma de Buenos Aires, Argentina` });
+  });
+
+  const seen = new Set();
+  return queries.filter(query => {
+    const key = JSON.stringify(query);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 async function fetchNominatim(params) {
@@ -108,33 +196,36 @@ async function fetchNominatim(params) {
 }
 
 async function geocode(address) {
-  const { street, number } = parseStreetNumber(address);
-  const viewbox = `${comuna9Bounds.getWest()},${comuna9Bounds.getNorth()},${comuna9Bounds.getEast()},${comuna9Bounds.getSouth()}`;
-  const queries = [
-    { format: 'json', limit: '8', countrycodes: 'ar', addressdetails: '1', bounded: '1', viewbox, street: `${number} ${street}`, city: 'Ciudad Autónoma de Buenos Aires', country: 'Argentina' },
-    { format: 'json', limit: '8', countrycodes: 'ar', addressdetails: '1', bounded: '1', viewbox, q: `${address}, Comuna 9, Ciudad Autónoma de Buenos Aires, Argentina` },
-    { format: 'json', limit: '8', countrycodes: 'ar', addressdetails: '1', bounded: '1', viewbox, q: `${stripAccents(address)}, CABA, Argentina` },
-    { format: 'json', limit: '8', countrycodes: 'ar', addressdetails: '1', q: `${address}, Ciudad Autónoma de Buenos Aires, Argentina` }
-  ];
-
   let candidates = [];
-  for (const params of queries) {
-    const data = await fetchNominatim(params);
-    candidates = candidates.concat(data);
-    if (data.length) break;
-    await new Promise(r => setTimeout(r, 350));
+  let lastError = '';
+  for (const params of buildGeocodeQueries(address)) {
+    try {
+      const data = await fetchNominatim(params);
+      candidates = candidates.concat(data);
+      const bestInside = candidates
+        .map(item => ({ ...item, _score: scoreResult(item, address) }))
+        .filter(item => isInsideComuna9(Number(item.lat), Number(item.lon)))
+        .sort((a, b) => b._score - a._score)[0];
+      if (bestInside && bestInside._score >= 1420) break;
+    } catch (err) {
+      lastError = err.message;
+    }
+    await new Promise(r => setTimeout(r, geocodeDelayMs));
   }
-  if (!candidates.length) throw new Error(`No encontré: ${address}`);
+  if (!candidates.length) throw new Error(`No encontré: ${address}${lastError ? ` (${lastError})` : ''}`);
 
   candidates = candidates
     .map(item => ({ ...item, _score: scoreResult(item, address) }))
     .sort((a, b) => b._score - a._score);
 
-  const best = candidates[0];
+  const onlyComuna9 = document.getElementById('onlyComuna9').checked;
+  const validCandidates = onlyComuna9
+    ? candidates.filter(item => isInsideComuna9(Number(item.lat), Number(item.lon)))
+    : candidates;
+  if (!validCandidates.length) throw new Error(`Resultado fuera de Comuna 9: ${address}`);
+
+  const best = validCandidates[0];
   const lat = Number(best.lat), lon = Number(best.lon);
-  if (document.getElementById('onlyComuna9').checked && !isInsideComuna9(lat, lon)) {
-    throw new Error(`Fuera de Comuna 9 o resultado dudoso: ${address}`);
-  }
   return [lat, lon];
 }
 
@@ -166,13 +257,39 @@ function escapeHtml(str) {
   return String(str).replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 }
 
-function redrawLines() {
-  lineLayer.clearLayers();
+function labelsVisible() {
+  return document.getElementById('showLabels').checked;
+}
+
+function syncLabelVisibility() {
   entries.forEach(e => {
-    if (e.marker && e.label && map.hasLayer(e.label)) {
-      L.polyline([e.marker.getLatLng(), e.label.getLatLng()], { color: '#111827', weight: 1.5, dashArray: '4,4' }).addTo(lineLayer);
+    if (!e.label) return;
+    if (labelsVisible()) {
+      if (!map.hasLayer(e.label)) e.label.addTo(map);
+    } else if (map.hasLayer(e.label)) {
+      map.removeLayer(e.label);
     }
   });
+}
+
+function updateLegend() {
+  const list = document.getElementById('legendList');
+  const count = document.getElementById('legendCount');
+  list.innerHTML = '';
+  count.textContent = `${entries.length} ${entries.length === 1 ? 'direccion' : 'direcciones'}`;
+  entries.forEach(e => {
+    const item = document.createElement('li');
+    item.innerHTML = `<span class="legend-num">${e.order}</span><span>${escapeHtml(e.address)}</span>`;
+    list.appendChild(item);
+  });
+}
+
+function setEntryLatLng(entry, latlng) {
+  entry.marker.setLatLng(latlng);
+  entry.label.setLatLng(latlng);
+  updateClusters();
+  arrangeLabels(false);
+  updateLegend();
 }
 
 function rebuildList() {
@@ -184,15 +301,25 @@ function rebuildList() {
     if (e.label) e.label.setIcon(labelIcon(e));
     const div = document.createElement('div');
     div.className = 'item';
-    div.innerHTML = `<span class="num">${e.order}</span><input value="${escapeHtml(e.address)}" /><button title="Subir">↑</button><button title="Bajar">↓</button>`;
+    div.innerHTML = `<span class="num">${e.order}</span><input value="${escapeHtml(e.address)}" /><button type="button" title="Subir">↑</button><button type="button" title="Bajar">↓</button><button type="button" title="Buscar de nuevo">↻</button><button type="button" title="Reubicar con clic en mapa">◎</button><button type="button" title="Borrar">×</button>`;
     const input = div.querySelector('input');
-    input.addEventListener('change', () => { e.address = input.value; e.label.setIcon(labelIcon(e)); updateClusters(); });
+    input.addEventListener('change', () => {
+      e.address = normalizeAddress(input.value);
+      input.value = e.address;
+      e.label.setIcon(labelIcon(e));
+      updateClusters();
+      updateLegend();
+    });
     div.children[2].onclick = () => moveEntry(idx, -1);
     div.children[3].onclick = () => moveEntry(idx, 1);
+    div.children[4].onclick = () => refreshEntry(idx);
+    div.children[5].onclick = () => startRelocate(idx);
+    div.children[6].onclick = () => deleteEntry(idx);
     list.appendChild(div);
   });
   updateClusters();
-  redrawLines();
+  syncLabelVisibility();
+  updateLegend();
 }
 
 function moveEntry(i, dir) {
@@ -203,6 +330,38 @@ function moveEntry(i, dir) {
   arrangeLabels(false);
 }
 
+async function refreshEntry(i) {
+  const entry = entries[i];
+  if (!entry) return;
+  setStatus(`[BUSCANDO] ${entry.address}`);
+  try {
+    const latlng = await geocode(entry.address);
+    setEntryLatLng(entry, latlng);
+    fitAll();
+    setStatus(`[OK] Reubicada: ${entry.order}. ${entry.address}`, 'ok');
+  } catch (err) {
+    setStatus(`[WARN] ${err.message}`, 'warn');
+  }
+}
+
+function startRelocate(i) {
+  relocatingEntry = entries[i] || null;
+  if (!relocatingEntry) return;
+  setStatus(`[REUBICAR] Hacé clic en el mapa para ubicar: ${relocatingEntry.order}. ${relocatingEntry.address}`);
+}
+
+function deleteEntry(i) {
+  const entry = entries[i];
+  if (!entry) return;
+  if (entry.marker) map.removeLayer(entry.marker);
+  if (entry.label) map.removeLayer(entry.label);
+  entries.splice(i, 1);
+  relocatingEntry = null;
+  rebuildList();
+  fitAll();
+  setStatus(`[OK] Punto borrado. Quedan ${entries.length}.`, 'ok');
+}
+
 async function mapAddresses() {
   clearAll();
   const btn = document.getElementById('mapBtn');
@@ -210,44 +369,54 @@ async function mapAddresses() {
   const addresses = document.getElementById('addressInput').value.split('\n').map(normalizeAddress).filter(Boolean);
   let ok = 0, failed = [];
 
-  for (let i = 0; i < addresses.length; i++) {
-    const address = addresses[i];
-    setStatus(`Buscando ${i + 1}/${addresses.length}: ${address}`);
-    try {
-      const latlng = await geocode(address);
-      const entry = { address, order: entries.length + 1 };
-      entry.marker = L.marker(latlng, { icon: pinIcon(entry.order), draggable: true }).addTo(map);
-      entry.marker.on('drag', () => { updateClusters(); redrawLines(); });
-      entry.marker.on('dragend', () => arrangeLabels(false));
-      entry.label = L.marker(latlng, { icon: labelIcon(entry), draggable: true, interactive: true, zIndexOffset: 1000 }).addTo(map);
-      entry.label.on('drag', () => redrawLines());
-      entries.push(entry);
-      ok++;
-      await new Promise(r => setTimeout(r, 650));
-    } catch (err) {
-      failed.push(err.message);
-      console.warn(err.message);
+  try {
+    if (!addresses.length) {
+      setStatus('[WARN] Pegá al menos una dirección.', 'warn');
+      return;
     }
+
+    for (let i = 0; i < addresses.length; i++) {
+      const address = addresses[i];
+      setStatus(`[BUSCANDO] ${i + 1}/${addresses.length}: ${address}`);
+      try {
+        const latlng = await geocode(address);
+        const entry = { address, order: entries.length + 1 };
+        entry.marker = L.marker(latlng, { icon: pinIcon(entry.order), draggable: true }).addTo(map);
+        entry.marker.on('drag', () => updateClusters());
+        entry.marker.on('dragend', () => arrangeLabels(false));
+        entry.label = L.marker(latlng, { icon: labelIcon(entry), draggable: true, interactive: true, zIndexOffset: 1000 });
+        entry.label.on('dragend', () => arrangeLabels(false));
+        entries.push(entry);
+        ok++;
+      } catch (err) {
+        failed.push(err.message);
+        console.warn(err.message);
+      }
+      await new Promise(r => setTimeout(r, geocodeDelayMs));
+    }
+    fitAll();
+    setTimeout(() => arrangeLabels(true), 500);
+    rebuildList();
+    setStatus(`[${failed.length ? 'WARN' : 'OK'}] Mapeadas: ${ok}. Fallidas: ${failed.length}${failed.length ? ' | ' + failed.join(' | ') : ''}`, failed.length ? 'warn' : 'ok');
+  } finally {
+    btn.classList.remove('loading');
+    btn.textContent = 'Mapear direcciones';
   }
-  fitAll();
-  setTimeout(() => arrangeLabels(true), 500);
-  rebuildList();
-  btn.classList.remove('loading'); btn.textContent = 'Mapear direcciones';
-  setStatus(`Mapeadas: ${ok}. Fallidas: ${failed.length}${failed.length ? ' — ' + failed.join(' | ') : ''}`, failed.length ? 'warn' : 'ok');
 }
 
 function clearAll() {
   entries.forEach(e => { if (e.marker) map.removeLayer(e.marker); if (e.label) map.removeLayer(e.label); });
   entries = [];
-  lineLayer.clearLayers();
+  relocatingEntry = null;
   clusterLayer.clearLayers();
   clusterGroups = [];
   document.getElementById('list').innerHTML = '';
-  setStatus('Listo.');
+  updateLegend();
+  setStatus('[OK] Listo.');
 }
 
 function fitAll() {
-  const points = entries.flatMap(e => [e.marker?.getLatLng(), e.label?.getLatLng()]).filter(Boolean);
+  const points = entries.map(e => e.marker?.getLatLng()).filter(Boolean);
   if (points.length) map.fitBounds(L.latLngBounds(points), { padding: [90, 90] });
   else map.fitBounds(comuna9Bounds, { padding: [30, 30] });
 }
@@ -282,7 +451,7 @@ function arrangeLabels(fitAfter = false) {
     e.label.setIcon(labelIcon(e));
   });
   updateClusters();
-  redrawLines();
+  syncLabelVisibility();
   if (fitAfter) fitAll();
 }
 
@@ -318,7 +487,7 @@ function updateClusters() {
     const title = g.entries.map(e => `${e.order}. ${e.address}`).join('\n');
     L.marker([avgLat, avgLng], { icon: pinIcon(nums, true), title }).addTo(clusterLayer);
   });
-  redrawLines();
+  syncLabelVisibility();
 }
 
 function applyFontSize() {
@@ -349,20 +518,42 @@ function updatePdfPreset() {
 }
 
 async function exportPdf() {
-  document.getElementById('mapTitle').textContent = document.getElementById('titleInput').value || 'Mapa de direcciones';
-  await new Promise(r => setTimeout(r, 300));
-  const wrap = document.querySelector('.map-wrap');
-  const canvas = await html2canvas(wrap, { useCORS: true, allowTaint: false, scale: 2, backgroundColor: '#ffffff' });
-  const { jsPDF } = window.jspdf;
-  const w = Number(document.getElementById('pdfW').value) || 297;
-  const h = Number(document.getElementById('pdfH').value) || 210;
-  const pdf = new jsPDF({ orientation: w > h ? 'landscape' : 'portrait', unit: 'mm', format: [w, h] });
-  const img = canvas.toDataURL('image/png');
-  const ratio = Math.min(w / canvas.width, h / canvas.height);
-  const imgW = canvas.width * ratio;
-  const imgH = canvas.height * ratio;
-  pdf.addImage(img, 'PNG', (w - imgW) / 2, (h - imgH) / 2, imgW, imgH);
-  pdf.save('mapa-direcciones.pdf');
+  const btn = document.getElementById('pdfBtn');
+  btn.classList.add('loading');
+  btn.textContent = 'Generando PDF...';
+  document.body.classList.add('exporting');
+  try {
+    document.getElementById('mapTitle').textContent = document.getElementById('titleInput').value || 'Mapa de direcciones';
+    updateLegend();
+    map.invalidateSize();
+    await new Promise(r => setTimeout(r, 500));
+    const wrap = document.querySelector('.map-wrap');
+    const canvas = await html2canvas(wrap, { useCORS: true, allowTaint: false, scale: 2, backgroundColor: '#020617' });
+    const { jsPDF } = window.jspdf;
+    const w = Number(document.getElementById('pdfW').value) || 297;
+    const h = Number(document.getElementById('pdfH').value) || 210;
+    const pdf = new jsPDF({ orientation: w > h ? 'landscape' : 'portrait', unit: 'mm', format: [w, h] });
+    const img = canvas.toDataURL('image/png');
+    const ratio = Math.min(w / canvas.width, h / canvas.height);
+    const imgW = canvas.width * ratio;
+    const imgH = canvas.height * ratio;
+    pdf.addImage(img, 'PNG', (w - imgW) / 2, (h - imgH) / 2, imgW, imgH);
+    pdf.save('mapa-direcciones.pdf');
+    setStatus('[OK] PDF generado.', 'ok');
+  } catch (err) {
+    setStatus(`[WARN] No se pudo generar el PDF: ${err.message}`, 'warn');
+  } finally {
+    document.body.classList.remove('exporting');
+    btn.classList.remove('loading');
+    btn.textContent = 'Generar PDF';
+  }
+}
+
+function togglePanel() {
+  document.body.classList.toggle('panel-hidden');
+  const hidden = document.body.classList.contains('panel-hidden');
+  document.getElementById('togglePanelBtn').textContent = hidden ? 'Mostrar panel' : 'Ocultar panel';
+  setTimeout(() => map.invalidateSize(), 250);
 }
 
 document.getElementById('mapBtn').onclick = mapAddresses;
@@ -374,9 +565,18 @@ document.getElementById('markerSize').oninput = applyMarkerSize;
 document.getElementById('clusterPx').oninput = applyClusterDistance;
 document.getElementById('zoomRange').oninput = e => map.setZoom(Number(e.target.value));
 document.getElementById('titleInput').oninput = e => document.getElementById('mapTitle').textContent = e.target.value;
+document.getElementById('showLabels').onchange = () => { syncLabelVisibility(); arrangeLabels(false); };
 document.getElementById('pdfPreset').onchange = updatePdfPreset;
 document.getElementById('orientation').onchange = updatePdfPreset;
 document.getElementById('pdfBtn').onclick = exportPdf;
-map.on('zoomend moveend', () => { updateClusters(); redrawLines(); });
+document.getElementById('togglePanelBtn').onclick = togglePanel;
+map.on('click', e => {
+  if (!relocatingEntry) return;
+  setEntryLatLng(relocatingEntry, e.latlng);
+  setStatus(`[OK] Reubicada manualmente: ${relocatingEntry.order}. ${relocatingEntry.address}`, 'ok');
+  relocatingEntry = null;
+});
+map.on('zoomend moveend', () => updateClusters());
 updatePdfPreset();
+updateLegend();
 fitAll();
